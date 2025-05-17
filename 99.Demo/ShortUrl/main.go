@@ -4,113 +4,128 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
-	"github.com/gin-gonic/gin"
+	"html/template"
+	"math/rand"
 	"net/http"
-	"os"
+	"strings"
+	"time"
 )
 
-// GinMain 作为入口
-func GinMain() {
+// UrlMap 存储长地址与短地址的关系
+type UrlMap struct {
+	LongUrl  string `json:"long_url"`
+	ShortUrl string `json:"short_url"`
+}
 
-	// 引用Gin
-	ginServer := gin.Default()
+// UrlData 存储Url映射
+type UrlData struct {
+	Mappings map[string]UrlMap
+}
 
-	// 渲染网页
-	ginServer.LoadHTMLGlob("template/*")
-	ginServer.GET("/", func(context *gin.Context) {
-		context.HTML(http.StatusOK, "add.html", gin.H{
-			"Title": "Main",
-		})
-	})
+// 定义公共变量
+var (
+	urlDB = UrlData{
+		Mappings: make(map[string]UrlMap),
+	}
+	letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890")
+)
 
-	// 制作增加接口
-	ginServer.POST("/add", func(context *gin.Context) {
-		// 获取页面提交的url
-		urlText := context.PostForm("inputUrl")
+// 初始化
+func init() {
+	rand.Seed(time.Now().UnixNano())
+	// rand.NewSource(time.Now().UnixNano())
+	// rand.Seed(time.Now().UnixNano()) -> 弃用方法
+}
 
-		// 数据返回通知
-		context.JSON(http.StatusOK, gin.H{
-			"msg": "成功传入服务器后端",
-			"url": urlText,
-		})
+// RandomStrings 生成随机字符串作为后缀
+func RandomStrings(length int) string {
+	b := make([]rune, length)
+	for i := range b {
+		b[i] = letterRunes[rand.Intn(len(letterRunes))]
+	}
+	return string(b)
+}
 
-	})
+// RootPath 处理根路径
+func RootPath(w http.ResponseWriter, r *http.Request) {
+	tmpl := template.Must(template.ParseFiles("templates/index.html"))
 
-	// 开启端口运行框架
-	err := ginServer.Run(":8000")
+	// 收集所有映射数据
+	mappings := make([]UrlMap, 0, len(urlDB.Mappings))
+	for _, mapping := range urlDB.Mappings {
+		mappings = append(mappings, mapping)
+	}
+
+	data := struct {
+		Mappings []UrlMap
+	}{
+		Mappings: mappings,
+	}
+
+	err := tmpl.Execute(w, data)
 	if err != nil {
 		return
 	}
-
 }
 
-// UrlData 自定义类
-type UrlData struct {
-	OldUrl string `json:"old_url"`
-	NewUrl string `json:"new_url"`
-}
-
-// ReadJsonFile 读取Json的文件内容
-// filePath		:	文件路径
-// []UrlData	:	返回UrlData
-func ReadJsonFile(filePath string) []UrlData {
-	// 定义data为UrlData的接收内容
-	var data []UrlData
-	// 读取文件
-	jsonFile, err := os.ReadFile(filePath)
-	if err != nil {
-		fmt.Println("读取Json文件失败！", err)
-		return data
+// ShortLinks 创建短链接
+func ShortLinks(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "不允许的方法", http.StatusMethodNotAllowed)
+		return
 	}
 
-	// 解析数据
-	err1 := json.Unmarshal(jsonFile, &data)
-	if err1 != nil {
-		fmt.Println("解析Json文件失败！")
-		return data
+	longUrl := r.FormValue("long_url")
+	if longUrl == "" {
+		http.Error(w, "长链接 是必需的", http.StatusBadRequest)
+		return
 	}
 
-	return data
-}
-
-// WriteJsonFile 写入Json文件
-// filePath		:	文件路径
-// data			:	写入数据
-func WriteJsonFile(filePath string, data []UrlData) error {
-	// 打开Json文件
-	jsonFile, err := os.OpenFile(filePath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0666)
-	if err != nil {
-		fmt.Println("打开Json文件失败了！", err)
-		return err
-	}
-	defer func(jsonFile *os.File) {
-		err := jsonFile.Close()
-		if err != nil {
-			fmt.Println("未能正常关闭Json文件！", err)
+	// 检查是否已经拥有
+	for _, mapping := range urlDB.Mappings {
+		if mapping.LongUrl == longUrl {
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
 		}
-	}(jsonFile)
-
-	// 格式化Json输出
-	encoder := json.NewEncoder(jsonFile)
-	err = encoder.Encode(data)
-	if err != nil {
-		return err
 	}
-	return err
 
+	// 生成后缀
+	shortSuffix := RandomStrings(6)
+
+	// 构建完整短链接
+	shortUrl := "http://127.0.0.1:8000/test/" + shortSuffix
+
+	// 保存映射关系
+	urlDB.Mappings[shortSuffix] = UrlMap{
+		LongUrl:  longUrl,
+		ShortUrl: shortUrl,
+	}
+
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// ShortToLong 重定向短链接到长链接
+func ShortToLong(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/test/")
+	mapping, exists := urlDB.Mappings[path]
+
+	if !exists {
+		http.Error(w, "找不到 URL", http.StatusNotFound)
+		return
+	}
+
+	http.Redirect(w, r, mapping.LongUrl, http.StatusFound)
 }
 
 func main() {
-	// GinMain()
-	// 写入的数据
-	arr := []UrlData{
-		{
-			"111",
-			"2223",
-		},
+	http.HandleFunc("/", RootPath)
+	http.HandleFunc("/create", ShortLinks)
+	http.HandleFunc("/test/", ShortToLong)
+
+	println("服务开启到 :8080")
+	println("http://127.0.0.1:8000")
+	err := http.ListenAndServe(":8000", nil)
+	if err != nil {
+		return
 	}
-	fmt.Println(WriteJsonFile("../json/json.json", arr))
-	fmt.Println(ReadJsonFile("../json/json.json"))
 }
