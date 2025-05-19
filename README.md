@@ -1,3 +1,4 @@
+## 重学，使用尚硅谷的课（分支为SGGClass）
 ### GoLangStudy ing...
-#### 基础教学视频学习地址：https://www.bilibili.com/video/BV1ae41157o9
-#### Gin视频学习地址：https://www.bilibili.com/video/BV1Rd4y1C7A1
+#### 【尚硅谷】Golang入门到实战教程丨一套精通GO语言
+#### https://www.bilibili.com/video/BV1ME411Y71o
